@@ -163,8 +163,7 @@ func process(line []byte, slog *syslog.Writer) {
 // to indicate that the program can quit. Example of direct use:
 //   scanner := bufio.NewScanner(os.Stdin)
 //	 go convertLogs(scanner, logger, finished)
-//	 <-finished
-func convertLogs(scanner *bufio.Scanner, logger *syslog.Writer, finished chan bool) {
+func convertLogs(scanner *bufio.Scanner, logger *syslog.Writer, done chan bool) {
 	for scanner.Scan() {
 		process(scanner.Bytes(), logger)
 		os.Stdout.Write((scanner.Bytes()))
@@ -173,13 +172,12 @@ func convertLogs(scanner *bufio.Scanner, logger *syslog.Writer, finished chan bo
 	if err := scanner.Err(); err != nil {
 		fmt.Fprintln(os.Stderr, "error reading standard input:", err)
 	}
-	close(finished)
+	done <- true
 }
 
 // runCommand runs a Unix command, writing output from the command's stdout
-// to the syslog, until the command closes its output stream. It then closes
-// the channel to indicate that the caller can quit.
-func runCommand(cmdline []string, logger *syslog.Writer, finished chan bool) {
+// to the syslog, until the command closes its output stream.
+func runCommand(cmdline []string, logger *syslog.Writer) error {
 	cmdname := cmdline[0]
 	var cmd *exec.Cmd
 	if len(cmdline) > 1 {
@@ -194,19 +192,24 @@ func runCommand(cmdline []string, logger *syslog.Writer, finished chan bool) {
 
 	scanner := bufio.NewScanner(cmdout)
 
-	go convertLogs(scanner, logger, finished)
+	done := make(chan bool)
+	go convertLogs(scanner, logger, done)
 
 	fmt.Printf("Starting %s %v", cmdname, os.Args[1:])
 	err = cmd.Start()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error starting %s: %s", cmdname, err)
+		return err
 	}
-	<-finished
 
 	err = cmd.Wait()
+	<-done
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error running %s: %s", cmdname, err)
+	} else {
+		fmt.Fprintf(os.Stderr, "successfully ran %s to completion", cmdname)
 	}
+	return err
 }
 
 func main() {
@@ -229,16 +232,19 @@ func main() {
 		}
 	}()
 
-	// If we were given an explicit command line to run, do so
-	finished := make(chan bool)
-	if len(os.Args) > 1 {
-		runCommand(os.Args[1:], logger, finished)
+	if len(os.Args) > 2 && os.Args[1] == "run" {
+		// Explicit command line
+		runCommand(os.Args[2:], logger)
 	} else {
-		// Otherwise, run Domino from its usual place.
+		// Otherwise, pretend to be Domino and run Domino from its usual place.
 		// Oddly, the Domino 'server' command is a shell script for unspecified
 		// shell.
 		args := []string{"/bin/sh", "/opt/ibm/domino/bin/server"}
-		runCommand(args, logger, finished)
+		if len(os.Args) > 1 {
+			// Append any arguments we were given
+			args = append(args, os.Args[1:]...)
+		}
+		runCommand(args, logger)
 	}
 
 }

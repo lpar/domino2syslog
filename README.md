@@ -17,6 +17,7 @@ The resulting binary can then be copied straight to your server, with no need
 to install anything.
 
 To incorporate into your startup scripts, just run the binary instead 
-of `/opt/ibm/domino/bin/server`. By default it runs Domino for you in a
-separate goroutine and processes the output.
+of `/opt/ibm/domino/bin/server`. By default it runs Domino for you with any
+command line arguments you supply, and uses a separate goroutine to process the
+output and put it in your syslog.
 
